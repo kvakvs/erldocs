@@ -34,7 +34,8 @@ copy_static_files (Conf) ->
 %% @doc Parses arguments passed to script and calls
 %% appropriate function.
 -spec dispatch (list()) -> boolean().
-dispatch (Conf) ->
+dispatch (Conf0) ->
+    Conf = erldocs_heuristic:init(Conf0),
     Start = erlang:now(),
     DidBuild = build(Conf),
     Diff = timer:now_diff(erlang:now(), Start),
@@ -42,7 +43,6 @@ dispatch (Conf) ->
     Secs = trunc(Diff * 1.000e-6 - Mins * 60),
     ?log("Woot, finished in ~p Minutes ~p Seconds", [Mins, Secs]),
     DidBuild.
-
 
 %% @doc Build everything
 -spec build (list()) -> boolean().
@@ -87,10 +87,9 @@ build_file_map (Conf, AppName, File) ->
             end
     end,
 
-    case lists:member(Type, buildable()) of
+    case is_buildable(Type) of
         false -> [];
         true  ->
-
             Module = bname(File, ".xml"),
             Xml = strip_whitespace(Content),
 
@@ -114,8 +113,17 @@ build_file_map (Conf, AppName, File) ->
             ok = render(Type, AppName, Module, Content, TypeSpecs, Conf),
 
             case lists:member({AppName, Module}, ignore()) of
-                true -> [];
-                false -> [ ["mod", AppName, Module, Sum1] |  Funs]
+                false ->
+                    case erldocs_heuristic:should_skip(Conf, File, Sum1, Funs)of
+                        do_not_skip ->
+                            [ ["mod", AppName, Module, Sum1] |  Funs];
+                        Reason ->
+                            ?log("ignored: ~s (~s)~n", [File, Reason]),
+                            []
+                    end;
+                true ->
+                    ?log("ignored: ~s (ignored)~n", [File]),
+                    []
             end
     end.
 
@@ -802,8 +810,9 @@ dname (Name) ->
     filename:dirname(Name).
 
 % List of the type of xml files erldocs can build
-buildable () ->
-    [erlref, cref].
+is_buildable (Type) ->
+    Choices = [erlref, cref],
+    lists:member(Type, Choices).
 
 ignore () ->
     [ {"kernel", "init"}
